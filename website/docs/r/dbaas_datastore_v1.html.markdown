@@ -47,6 +47,13 @@ resource "selectel_dbaas_datastore_v1" "datastore_1" {
     mode = "transaction"
     size = 50
   }
+  config = {
+    xmloption = "content"
+    work_mem = 512
+    session_replication_role = "replica"
+    vacuum_cost_delay = 25
+    transform_null_equals = false
+  }
 }
 ```
 
@@ -63,7 +70,7 @@ The following arguments are supported:
 * `region` - (Required) A Selectel VPC region of where the datastore is located.
   Changing this creates a new datastore.
 
-* `subnet_id` - (Required) associated OpenStack Networking service subnet ID.
+* `subnet_id` - (Required) Associated OpenStack Networking service subnet ID.
   Changing this creates a new datastore.
 
 * `type_id` - (Required) The datastore type for the datastore.
@@ -81,6 +88,8 @@ The following arguments are supported:
 
 * `restore` - (Optional) Restore parameters for the datastore. It's a complex value. See description below.
   Changing this creates a new datastore.
+
+* `config` - (Optional) Configuration parameters for the datastore.
 
 **flavor**
 

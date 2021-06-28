@@ -46,34 +46,36 @@ type Firewall struct {
 
 // Datastore is the API response for the datastores.
 type Datastore struct {
-	ID         string      `json:"id"`
-	CreatedAt  string      `json:"created_at"`
-	UpdatedAt  string      `json:"updated_at"`
-	ProjectID  string      `json:"project_id"`
-	Name       string      `json:"name"`
-	TypeID     string      `json:"type_id"`
-	SubnetID   string      `json:"subnet_id"`
-	FlavorID   string      `json:"flavor_id"`
-	Status     Status      `json:"status"`
-	Connection Connection  `json:"connection"`
-	Firewall   []Firewall  `json:"firewall"`
-	Instances  []Instances `json:"instances"`
-	Pooler     Pooler      `json:"pooler"`
-	Flavor     Flavor      `json:"flavor"`
-	NodeCount  int         `json:"node_count"`
-	Enabled    bool        `json:"enabled"`
+	ID         string                 `json:"id"`
+	CreatedAt  string                 `json:"created_at"`
+	UpdatedAt  string                 `json:"updated_at"`
+	ProjectID  string                 `json:"project_id"`
+	Name       string                 `json:"name"`
+	TypeID     string                 `json:"type_id"`
+	SubnetID   string                 `json:"subnet_id"`
+	FlavorID   string                 `json:"flavor_id"`
+	Status     Status                 `json:"status"`
+	Connection Connection             `json:"connection"`
+	Firewall   []Firewall             `json:"firewall"`
+	Instances  []Instances            `json:"instances"`
+	Config     map[string]interface{} `json:"config"`
+	Pooler     Pooler                 `json:"pooler"`
+	Flavor     Flavor                 `json:"flavor"`
+	NodeCount  int                    `json:"node_count"`
+	Enabled    bool                   `json:"enabled"`
 }
 
 // DatastoreCreateOpts represents options for the datastore Create request.
 type DatastoreCreateOpts struct {
-	Flavor    *Flavor  `json:"flavor,omitempty"`
-	Restore   *Restore `json:"restore,omitempty"`
-	Pooler    *Pooler  `json:"pooler,omitempty"`
-	Name      string   `json:"name"`
-	TypeID    string   `json:"type_id"`
-	SubnetID  string   `json:"subnet_id"`
-	FlavorID  string   `json:"flavor_id,omitempty"`
-	NodeCount int      `json:"node_count"`
+	Flavor    *Flavor                `json:"flavor,omitempty"`
+	Restore   *Restore               `json:"restore,omitempty"`
+	Pooler    *Pooler                `json:"pooler,omitempty"`
+	Config    map[string]interface{} `json:"config,omitempty"`
+	Name      string                 `json:"name"`
+	TypeID    string                 `json:"type_id"`
+	SubnetID  string                 `json:"subnet_id"`
+	FlavorID  string                 `json:"flavor_id,omitempty"`
+	NodeCount int                    `json:"node_count"`
 }
 
 // DatastoreUpdateOpts represents options for the datastore Update request.
@@ -97,6 +99,10 @@ type DatastorePoolerOpts struct {
 // DatastoreFirewallOpts represents options for the datastore's firewall rules Ureate request.
 type DatastoreFirewallOpts struct {
 	IPs []string `json:"ips"`
+}
+
+type DatastoreConfigOpts struct {
+	Config map[string]interface{} `json:"config"`
 }
 
 // DatastoreQueryParams represents available query parameters for datastore.
@@ -291,6 +297,30 @@ func (api *API) FirewallDatastore(ctx context.Context, datastoreID string, opts 
 		Datastore: opts,
 	}
 	requestBody, err := json.Marshal(firewallDatastoreOpts)
+	if err != nil {
+		return Datastore{}, fmt.Errorf("Error marshalling params to JSON, %w", err)
+	}
+
+	resp, err := api.makeRequest(ctx, http.MethodPut, uri, requestBody)
+	if err != nil {
+		return Datastore{}, err
+	}
+
+	var result struct {
+		Datastore Datastore `json:"datastore"`
+	}
+	err = json.Unmarshal(resp, &result)
+	if err != nil {
+		return Datastore{}, fmt.Errorf("Error during Unmarshal, %w", err)
+	}
+
+	return result.Datastore, nil
+}
+
+// ConfigDatastore updates firewall rules of an existing datastore.
+func (api *API) ConfigDatastore(ctx context.Context, datastoreID string, opts DatastoreConfigOpts) (Datastore, error) { //nolint
+	uri := fmt.Sprintf("/datastores/%s/config", datastoreID)
+	requestBody, err := json.Marshal(opts)
 	if err != nil {
 		return Datastore{}, fmt.Errorf("Error marshalling params to JSON, %w", err)
 	}

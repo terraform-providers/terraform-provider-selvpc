@@ -175,6 +175,14 @@ func resourceDBaaSDatastoreV1() *schema.Resource {
 					},
 				},
 			},
+			"config": {
+				Type:     schema.TypeMap,
+				Optional: true,
+				ForceNew: false,
+				Elem: &schema.Schema{
+					Type: schema.TypeString,
+				},
+			},
 		},
 	}
 }
@@ -204,6 +212,13 @@ func resourceDBaaSDatastoreV1Create(ctx context.Context, d *schema.ResourceData,
 		return diag.FromErr(errParseDatastoreV1Restore(err))
 	}
 
+	configMap := d.Get("config").(map[string]interface{})
+	config := make(map[string]interface{})
+	for paramName, paramValue := range configMap {
+		paramValueStr := paramValue.(string)
+		config[paramName] = convertFieldFromStringToType(paramValueStr)
+	}
+
 	datastoreCreateOpts := dbaas.DatastoreCreateOpts{
 		Name:      d.Get("name").(string),
 		TypeID:    d.Get("type_id").(string),
@@ -211,6 +226,7 @@ func resourceDBaaSDatastoreV1Create(ctx context.Context, d *schema.ResourceData,
 		NodeCount: d.Get("node_count").(int),
 		Pooler:    pooler,
 		Restore:   restore,
+		Config:    config,
 	}
 
 	if flavorOk {
@@ -288,97 +304,34 @@ func resourceDBaaSDatastoreV1Update(ctx context.Context, d *schema.ResourceData,
 		return diagErr
 	}
 
-	var (
-		updateOpts   dbaas.DatastoreUpdateOpts
-		poolerOpts   dbaas.DatastorePoolerOpts
-		firewallOpts dbaas.DatastoreFirewallOpts
-		resizeOpts   dbaas.DatastoreResizeOpts
-		err          error
-	)
-
 	if d.HasChange("name") {
-		updateOpts.Name = d.Get("name").(string)
-
-		log.Print(msgUpdate(objectDatastore, d.Id(), updateOpts))
-		_, err := dbaasClient.UpdateDatastore(ctx, d.Id(), updateOpts)
+		err := updateDatastoreName(ctx, d, dbaasClient)
 		if err != nil {
-			return diag.FromErr(errUpdatingObject(objectDatastore, d.Id(), err))
-		}
-
-		log.Printf("[DEBUG] waiting for datastore %s to become 'ACTIVE'", d.Id())
-		timeout := d.Timeout(schema.TimeoutCreate)
-		err = waitForDBaaSDatastoreV1ActiveState(ctx, dbaasClient, d.Id(), timeout)
-		if err != nil {
-			return diag.FromErr(errUpdatingObject(objectDatastore, d.Id(), err))
+			return diag.FromErr(err)
 		}
 	}
 	if d.HasChange("pooler") {
-		poolerSet := d.Get("pooler").(*schema.Set)
-		poolerOpts, err = resourceDBaaSDatastoreV1PoolerOptsFromSet(poolerSet)
+		err := updateDatastorePooler(ctx, d, dbaasClient)
 		if err != nil {
-			return diag.FromErr(errParseDatastoreV1Pooler(err))
-		}
-
-		log.Print(msgUpdate(objectDatastore, d.Id(), poolerOpts))
-		_, err := dbaasClient.PoolerDatastore(ctx, d.Id(), poolerOpts)
-		if err != nil {
-			return diag.FromErr(errUpdatingObject(objectDatastore, d.Id(), err))
-		}
-
-		log.Printf("[DEBUG] waiting for datastore %s to become 'ACTIVE'", d.Id())
-		timeout := d.Timeout(schema.TimeoutCreate)
-		err = waitForDBaaSDatastoreV1ActiveState(ctx, dbaasClient, d.Id(), timeout)
-		if err != nil {
-			return diag.FromErr(errUpdatingObject(objectDatastore, d.Id(), err))
+			return diag.FromErr(err)
 		}
 	}
 	if d.HasChange("firewall") {
-		firewallSet := d.Get("firewall").(*schema.Set)
-		firewallOpts, err = resourceDBaaSDatastoreV1FirewallOptsFromSet(firewallSet)
+		err := updateDatastoreFirewall(ctx, d, dbaasClient)
 		if err != nil {
-			return diag.FromErr(errParseDatastoreV1Firewall(err))
-		}
-
-		log.Print(msgUpdate(objectDatastore, d.Id(), firewallOpts))
-		_, err := dbaasClient.FirewallDatastore(ctx, d.Id(), firewallOpts)
-		if err != nil {
-			return diag.FromErr(errUpdatingObject(objectDatastore, d.Id(), err))
-		}
-
-		log.Printf("[DEBUG] waiting for datastore %s to become 'ACTIVE'", d.Id())
-		timeout := d.Timeout(schema.TimeoutCreate)
-		err = waitForDBaaSDatastoreV1ActiveState(ctx, dbaasClient, d.Id(), timeout)
-		if err != nil {
-			return diag.FromErr(errUpdatingObject(objectDatastore, d.Id(), err))
+			return diag.FromErr(err)
 		}
 	}
 	if d.HasChange("node_count") || d.HasChange("flavor") || d.HasChange("flavor_id") {
-		nodeCount := d.Get("node_count").(int)
-		resizeOpts.NodeCount = nodeCount
-
-		flavorID := d.Get("flavor_id")
-		flavorRaw := d.Get("flavor")
-
-		flavorSet := flavorRaw.(*schema.Set)
-		flavor, err := resourceDBaaSDatastoreV1FlavorFromSet(flavorSet)
+		err := resizeDatastore(ctx, d, dbaasClient)
 		if err != nil {
-			return diag.FromErr(errParseDatastoreV1Resize(err))
+			return diag.FromErr(err)
 		}
-
-		resizeOpts.Flavor = flavor
-		resizeOpts.FlavorID = flavorID.(string)
-
-		log.Print(msgUpdate(objectDatastore, d.Id(), resizeOpts))
-		_, err = dbaasClient.ResizeDatastore(ctx, d.Id(), resizeOpts)
+	}
+	if d.HasChange("config") {
+		err := updateDatastoreConfig(ctx, d, dbaasClient)
 		if err != nil {
-			return diag.FromErr(errUpdatingObject(objectDatastore, d.Id(), err))
-		}
-
-		log.Printf("[DEBUG] waiting for datastore %s to become 'ACTIVE'", d.Id())
-		timeout := d.Timeout(schema.TimeoutCreate)
-		err = waitForDBaaSDatastoreV1ActiveState(ctx, dbaasClient, d.Id(), timeout)
-		if err != nil {
-			return diag.FromErr(errUpdatingObject(objectDatastore, d.Id(), err))
+			return diag.FromErr(err)
 		}
 	}
 
@@ -636,4 +589,154 @@ func resourceDBaaSDatastoreV1RestoreOptsFromSet(restoreSet *schema.Set) (*dbaas.
 	}
 
 	return restore, nil
+}
+
+func convertFieldFromStringToType(fieldValue string) interface{} {
+	if val, err := strconv.Atoi(fieldValue); err == nil {
+		return val
+	} else if val, err := strconv.ParseFloat(fieldValue, 64); err == nil {
+		return val
+	} else if val, err := strconv.ParseFloat(fieldValue, 32); err == nil {
+		return val
+	} else if val, err := strconv.ParseBool(fieldValue); err == nil {
+		return val
+	} else {
+		return fieldValue
+	}
+}
+
+func updateDatastoreName(ctx context.Context, d *schema.ResourceData, client *dbaas.API) error {
+	var updateOpts dbaas.DatastoreUpdateOpts
+	updateOpts.Name = d.Get("name").(string)
+
+	log.Print(msgUpdate(objectDatastore, d.Id(), updateOpts))
+	_, err := client.UpdateDatastore(ctx, d.Id(), updateOpts)
+	if err != nil {
+		return errUpdatingObject(objectDatastore, d.Id(), err)
+	}
+
+	log.Printf("[DEBUG] waiting for datastore %s to become 'ACTIVE'", d.Id())
+	timeout := d.Timeout(schema.TimeoutUpdate)
+	err = waitForDBaaSDatastoreV1ActiveState(ctx, client, d.Id(), timeout)
+	if err != nil {
+		return errUpdatingObject(objectDatastore, d.Id(), err)
+	}
+
+	return nil
+}
+
+func updateDatastorePooler(ctx context.Context, d *schema.ResourceData, client *dbaas.API) error {
+	poolerSet := d.Get("pooler").(*schema.Set)
+	poolerOpts, err := resourceDBaaSDatastoreV1PoolerOptsFromSet(poolerSet)
+	if err != nil {
+		return errParseDatastoreV1Pooler(err)
+	}
+
+	log.Print(msgUpdate(objectDatastore, d.Id(), poolerOpts))
+	_, err = client.PoolerDatastore(ctx, d.Id(), poolerOpts)
+	if err != nil {
+		return errUpdatingObject(objectDatastore, d.Id(), err)
+	}
+
+	log.Printf("[DEBUG] waiting for datastore %s to become 'ACTIVE'", d.Id())
+	timeout := d.Timeout(schema.TimeoutUpdate)
+	err = waitForDBaaSDatastoreV1ActiveState(ctx, client, d.Id(), timeout)
+	if err != nil {
+		return errUpdatingObject(objectDatastore, d.Id(), err)
+	}
+
+	return nil
+}
+
+func updateDatastoreFirewall(ctx context.Context, d *schema.ResourceData, client *dbaas.API) error {
+	firewallSet := d.Get("firewall").(*schema.Set)
+	firewallOpts, err := resourceDBaaSDatastoreV1FirewallOptsFromSet(firewallSet)
+	if err != nil {
+		return errParseDatastoreV1Firewall(err)
+	}
+
+	log.Print(msgUpdate(objectDatastore, d.Id(), firewallOpts))
+	_, err = client.FirewallDatastore(ctx, d.Id(), firewallOpts)
+	if err != nil {
+		return errUpdatingObject(objectDatastore, d.Id(), err)
+	}
+
+	log.Printf("[DEBUG] waiting for datastore %s to become 'ACTIVE'", d.Id())
+	timeout := d.Timeout(schema.TimeoutUpdate)
+	err = waitForDBaaSDatastoreV1ActiveState(ctx, client, d.Id(), timeout)
+	if err != nil {
+		return errUpdatingObject(objectDatastore, d.Id(), err)
+	}
+
+	return nil
+}
+
+func updateDatastoreConfig(ctx context.Context, d *schema.ResourceData, client *dbaas.API) error {
+	var configOpts dbaas.DatastoreConfigOpts
+	datastore, err := client.Datastore(ctx, d.Id())
+	if err != nil {
+		return err
+	}
+	configMap := d.Get("config").(map[string]interface{})
+	config := make(map[string]interface{})
+	for paramName, paramValue := range configMap {
+		paramValueStr := paramValue.(string)
+		config[paramName] = convertFieldFromStringToType(paramValueStr)
+	}
+
+	for param := range datastore.Config {
+		if _, ok := config[param]; !ok {
+			config[param] = nil
+		}
+	}
+
+	configOpts.Config = config
+
+	log.Print(msgUpdate(objectDatastore, d.Id(), configOpts))
+	_, err = client.ConfigDatastore(ctx, d.Id(), configOpts)
+	if err != nil {
+		return errUpdatingObject(objectDatastore, d.Id(), err)
+	}
+
+	log.Printf("[DEBUG] waiting for datastore %s to become 'ACTIVE'", d.Id())
+	timeout := d.Timeout(schema.TimeoutUpdate)
+	err = waitForDBaaSDatastoreV1ActiveState(ctx, client, d.Id(), timeout)
+	if err != nil {
+		return errUpdatingObject(objectDatastore, d.Id(), err)
+	}
+
+	return nil
+}
+
+func resizeDatastore(ctx context.Context, d *schema.ResourceData, client *dbaas.API) error {
+	var resizeOpts dbaas.DatastoreResizeOpts
+	nodeCount := d.Get("node_count").(int)
+	resizeOpts.NodeCount = nodeCount
+
+	flavorID := d.Get("flavor_id")
+	flavorRaw := d.Get("flavor")
+
+	flavorSet := flavorRaw.(*schema.Set)
+	flavor, err := resourceDBaaSDatastoreV1FlavorFromSet(flavorSet)
+	if err != nil {
+		return errParseDatastoreV1Resize(err)
+	}
+
+	resizeOpts.Flavor = flavor
+	resizeOpts.FlavorID = flavorID.(string)
+
+	log.Print(msgUpdate(objectDatastore, d.Id(), resizeOpts))
+	_, err = client.ResizeDatastore(ctx, d.Id(), resizeOpts)
+	if err != nil {
+		return errUpdatingObject(objectDatastore, d.Id(), err)
+	}
+
+	log.Printf("[DEBUG] waiting for datastore %s to become 'ACTIVE'", d.Id())
+	timeout := d.Timeout(schema.TimeoutCreate)
+	err = waitForDBaaSDatastoreV1ActiveState(ctx, client, d.Id(), timeout)
+	if err != nil {
+		return errUpdatingObject(objectDatastore, d.Id(), err)
+	}
+
+	return nil
 }
